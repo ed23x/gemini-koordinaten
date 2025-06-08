@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
+import { Sun, Moon } from 'lucide-react';
 import { Label } from './components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Download, Save, Eye, EyeOff } from 'lucide-react';
 import CoordinateSystem from './components/CoordinateSystem';
+import Loader from './components/Loader';
 import './App.css';
 
 interface Point {
@@ -15,17 +17,30 @@ interface Point {
 }
 
 function App() {
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [apiKey, setApiKey] = useState<string>('');
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
-  const [xAxisLabel, setXAxisLabel] = useState<string>('X-Achse');
-  const [yAxisLabel, setYAxisLabel] = useState<string>('Y-Achse');
+  const [xAxisLabel, setXAxisLabel] = useState<string>('pH'); // Test X-axis pH
+  const [yAxisLabel, setYAxisLabel] = useState<string>('Concentration'); // Test Y-axis pH
   const [lineStyle, setLineStyle] = useState<'eckig' | 'gerundet'>('gerundet');
-  const [points, setPoints] = useState<Point[]>([]);
+  const [points, setPoints] = useState<Point[]>([
+    { x: 5, y: 10 }, { x: 6, y: 12 }, { x: 7.5, y: 18 }, {x: 8, y: 20}, {x: 9, y: 15} // Sample data for pH on X
+    // To test Y-axis pH: set yAxisLabel to 'pH' and points e.g. [{ x: 10, y: 5 }, { x: 12, y: 8 }]
+  ]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Set to false to show graph
   const [hoveredPoint, setHoveredPoint] = useState<Point | null>(null);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const coordinateSystemRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // Cookie-Handling für API-Schlüssel
   useEffect(() => {
@@ -271,7 +286,12 @@ function App() {
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-6 text-center">Gemini Koordinaten-Visualisierung</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold text-center">Gemini Koordinaten-Visualisierung</h1>
+        <Button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} variant="outline" size="icon">
+          {theme === 'light' ? <Moon className="h-[1.2rem] w-[1.2rem]" /> : <Sun className="h-[1.2rem] w-[1.2rem]" />}
+        </Button>
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Linke Spalte: Einstellungen */}
@@ -375,29 +395,35 @@ function App() {
                   'Bewegen Sie den Mauszeiger über einen Punkt für Details'}
               </CardDescription>
             </CardHeader>
-            <CardContent className="h-[400px] border rounded-md" ref={coordinateSystemRef}>
-              <CoordinateSystem 
-                points={points}
-                xAxisLabel={xAxisLabel}
-                yAxisLabel={yAxisLabel}
-                lineStyle={lineStyle}
-                onHoverPoint={setHoveredPoint}
-              />
+            <CardContent className="h-[300px] sm:h-[400px] border rounded-md relative" ref={coordinateSystemRef}>
+              {isProcessing ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-zinc-950">
+                  <Loader />
+                </div>
+              ) : (
+                <CoordinateSystem
+                  points={points}
+                  xAxisLabel={xAxisLabel}
+                  yAxisLabel={yAxisLabel}
+                  lineStyle={lineStyle}
+                  onHoverPoint={setHoveredPoint}
+                />
+              )}
             </CardContent>
             <CardFooter className="flex justify-between">
               <div className="flex space-x-2">
-                <Button 
-                  onClick={exportAsImage} 
-                  variant="outline" 
+                <Button
+                  onClick={exportAsImage}
+                  variant="outline"
                   size="sm"
                   disabled={points.length === 0}
                 >
                   <Download className="mr-2 h-4 w-4" />
                   Als Bild exportieren
                 </Button>
-                <Button 
-                  onClick={exportAsJson} 
-                  variant="outline" 
+                <Button
+                  onClick={exportAsJson}
+                  variant="outline"
                   size="sm"
                   disabled={points.length === 0}
                 >
@@ -426,17 +452,17 @@ function App() {
               <TabsContent value="upload" className="space-y-4 mt-4">
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="fileUpload">Datei auswählen</Label>
-                  <Input 
+                  <Input
                     id="fileUpload"
-                    type="file" 
+                    type="file"
                     onChange={handleFileChange}
                   />
                   <p className="text-sm text-gray-500">
                     Unterstützte Dateitypen: Bilder, PDFs, Textdateien, Tabellen
                   </p>
                 </div>
-                <Button 
-                  onClick={processFile} 
+                <Button
+                  onClick={processFile}
                   disabled={!selectedFile || isProcessing || !apiKey}
                   className="w-full"
                 >
@@ -448,9 +474,9 @@ function App() {
               <TabsContent value="import" className="space-y-4 mt-4">
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="jsonImport">JSON-Datei auswählen</Label>
-                  <Input 
+                  <Input
                     id="jsonImport"
-                    type="file" 
+                    type="file"
                     accept=".json"
                     onChange={importJson}
                   />
