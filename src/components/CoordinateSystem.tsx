@@ -40,6 +40,39 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
 
   const isMobile = useIsMobile();
 
+  const handleWheelZoom = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (!containerRef.current || !dimensions.width || !dimensions.height || !initialView) return;
+    event.preventDefault();
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    const dataXBeforeZoom = (mouseX - padding.left) / scale.x + offset.x;
+    const dataYBeforeZoom = (dimensions.height - mouseY - padding.bottom) / scale.y + offset.y;
+
+    const zoomIntensity = 0.1;
+    let newScaleX = scale.x * (1 - event.deltaY * zoomIntensity * 0.01);
+    let newScaleY = scale.y * (1 - event.deltaY * zoomIntensity * 0.01);
+
+    const minZoomFactor = 0.5;
+    const maxZoomFactor = 20;
+
+    newScaleX = Math.max(initialView.scale.x * minZoomFactor, Math.min(initialView.scale.x * maxZoomFactor, newScaleX));
+    newScaleY = Math.max(initialView.scale.y * minZoomFactor, Math.min(initialView.scale.y * maxZoomFactor, newScaleY));
+
+    const newOffsetX = dataXBeforeZoom - (mouseX - padding.left) / newScaleX;
+    const newOffsetY = dataYBeforeZoom - (dimensions.height - mouseY - padding.bottom) / newScaleY;
+
+    setScale({ x: newScaleX, y: newScaleY });
+    setOffset({ x: newOffsetX, y: newOffsetY });
+    setClickedAxisInfo(null);
+    if (hoveredPointIndex !== null) {
+        onHoverPoint(null);
+        setHoveredPointIndex(null);
+    }
+  }, [scale, offset, dimensions, padding, initialView, hoveredPointIndex, onHoverPoint]);
+
   const padding = isMobile
     ? { left: 35, right: 15, top: 15, bottom: 35 }
     : { left: 50, right: 20, top: 20, bottom: 50 };
@@ -169,10 +202,10 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
         resizeObserver.unobserve(containerRef.current);
       }
     };
-  }, [points, containerRef.current, padding]); // padding als Abhängigkeit hinzugefügt
+  }, [points, containerRef.current, padding, initialView]); // Added initialView to dep array
 
   useEffect(() => {
-    if (!phInfo || points.length < 2) {
+    if (!phInfo || points.length < 2) { // pH line requires at least 2 points for interpolation
       setIntersectPoint(null);
       return;
     }
@@ -186,7 +219,7 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
 
     let newIntersectPointData: { xVal: number; yVal: number } | null = null;
     // Calculate pH intersection point
-    if (phInfo && points.length >= 1) { // Need at least 1 point for pH line if it matches exactly
+    if (phInfo && points.length >= 1) { // interpolateValue can handle 1 point for exact match
       if (phInfo.axis === 'x' && 7 >= minX && 7 <= maxX) {
         const sortedByX = [...points].sort((a, b) => a.x - b.x);
         const result = interpolateValue(7, true, sortedByX);
@@ -269,7 +302,8 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
   };
 
   const handleAxisTickClick = (axis: 'x' | 'y', value: number) => {
-    if (points.length < 2) {
+     // Axis click requires at least 1 point for exact match, 2 for interpolation via interpolateValue
+    if (points.length < 1) {
       setClickedAxisInfo(null);
       return;
     }
@@ -315,7 +349,9 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
 
     const calculateNiceTicks = (visibleMin: number, visibleMax: number) => {
       const range = visibleMax - visibleMin;
-      if (range === 0) return [{ value: visibleMin, offset: 0.5 }]; // Single tick if no range
+      if (range === 0 && Number.isFinite(visibleMin)) return [{ value: visibleMin }];
+      if (!Number.isFinite(range) || range === 0) return [];
+
 
       const numTicksTarget = isMobile ? 3 : 5;
       let rawTickStep = range / numTicksTarget;
@@ -335,6 +371,8 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
       const lastTick = Math.floor(visibleMax / niceTickStep) * niceTickStep;
 
       const ticks = [];
+      if(niceTickStep === 0) return [{value: firstTick}]; // Avoid infinite loop if step is 0
+
       for (let value = firstTick; value <= lastTick + niceTickStep * 0.5; value += niceTickStep) {
          // Add small epsilon to include lastTick if it's a float precision issue
         ticks.push({ value });
@@ -343,10 +381,10 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
     };
 
     const formatTickValue = (value: number, niceTickStep: number) => {
-      if (niceTickStep === 0) return value.toFixed(0); // Should not happen with current logic
+      if (niceTickStep === 0 || !Number.isFinite(value)) return value.toString();
       const absoluteNiceTickStep = Math.abs(niceTickStep);
       if (absoluteNiceTickStep < 1) {
-        if (absoluteNiceTickStep < 0.01) return value.toFixed(3); // More precision for very small steps
+        if (absoluteNiceTickStep < 0.01) return value.toFixed(3);
         if (absoluteNiceTickStep < 0.1) return value.toFixed(2);
         return value.toFixed(1);
       }
@@ -358,13 +396,14 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
     const visibleMinX = offset.x;
     const visibleMaxX = offset.x + (dimensions.width - padding.left - padding.right) / scale.x;
     const xTickValues = calculateNiceTicks(visibleMinX, visibleMaxX);
-    const xNiceTickStep = xTickValues.length > 1 ? xTickValues[1].value - xTickValues[0].value : (xTickValues[0] ? xTickValues[0].value / 2 || 1 : 1) ;
+    const xNiceTickStep = xTickValues.length > 1 ? Math.abs(xTickValues[1].value - xTickValues[0].value) : (xTickValues.length === 1 && xTickValues[0] ? Math.abs(xTickValues[0].value / 2) || 1 : 1) ;
 
 
     const xTicks = xTickValues.map(({ value }, i) => {
       const screenX = ((value - offset.x) * scale.x) + padding.left;
       if (screenX < padding.left - 5 || screenX > dimensions.width - padding.right + 5) return null;
       const screenY = dimensions.height - padding.bottom + (isMobile ? 10 : 15);
+      const formattedValue = formatTickValue(value, xNiceTickStep);
       
       return (
         <g key={`x-tick-${i}`}>
@@ -380,10 +419,10 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
             x={screenX} 
             y={screenY} 
             textAnchor="middle"
-            className={`fill-gray-500 dark:fill-gray-400 text-[8px] sm:text-[10px] axis-tick-value ${Number.isInteger(value) ? 'cursor-pointer' : ''}`}
-            onClick={() => Number.isInteger(value) && handleAxisTickClick('x', value)}
+            className={`fill-gray-500 dark:fill-gray-400 text-[8px] sm:text-[10px] axis-tick-value ${Number.isInteger(parseFloat(formattedValue)) && formattedValue.indexOf('.') === -1 ? 'cursor-pointer' : ''}`}
+            onClick={() => Number.isInteger(parseFloat(formattedValue)) && formattedValue.indexOf('.') === -1 && handleAxisTickClick('x', parseFloat(formattedValue))}
           >
-            {formatTickValue(value, xNiceTickStep)}
+            {formattedValue}
           </text>
         </g>
       );
@@ -392,13 +431,14 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
     const visibleMinY = offset.y;
     const visibleMaxY = offset.y + (dimensions.height - padding.top - padding.bottom) / scale.y;
     const yTickValues = calculateNiceTicks(visibleMinY, visibleMaxY);
-    const yNiceTickStep = yTickValues.length > 1 ? yTickValues[1].value - yTickValues[0].value : (yTickValues[0] ? yTickValues[0].value / 2 || 1: 1);
+    const yNiceTickStep = yTickValues.length > 1 ? Math.abs(yTickValues[1].value - yTickValues[0].value) : (yTickValues.length === 1 && yTickValues[0] ? Math.abs(yTickValues[0].value / 2) || 1 : 1);
 
 
     const yTicks = yTickValues.map(({ value }, i) => {
       const screenY = dimensions.height - (((value - offset.y) * scale.y) + padding.bottom);
       if (screenY < padding.top - 5 || screenY > dimensions.height - padding.bottom + 5) return null;
       const screenX = padding.left - (isMobile ? 8 : 10);
+      const formattedValue = formatTickValue(value, yNiceTickStep);
       
       return (
         <g key={`y-tick-${i}`}>
@@ -415,10 +455,10 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
             y={screenY} 
             textAnchor="end" 
             dominantBaseline="middle"
-            className={`fill-gray-500 dark:fill-gray-400 text-[8px] sm:text-[10px] axis-tick-value ${Number.isInteger(value) ? 'cursor-pointer' : ''}`}
-            onClick={() => Number.isInteger(value) && handleAxisTickClick('y', value)}
+            className={`fill-gray-500 dark:fill-gray-400 text-[8px] sm:text-[10px] axis-tick-value ${Number.isInteger(parseFloat(formattedValue)) && formattedValue.indexOf('.') === -1 ? 'cursor-pointer' : ''}`}
+            onClick={() => Number.isInteger(parseFloat(formattedValue)) && formattedValue.indexOf('.') === -1 && handleAxisTickClick('y', parseFloat(formattedValue))}
           >
-            {formatTickValue(value, yNiceTickStep)}
+            {formattedValue}
           </text>
         </g>
       );
@@ -466,9 +506,12 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
       ref={containerRef}
       className="coordinate-system w-full h-full touch-pan-y" // Allow vertical scrolling on touch
       onClick={(e) => {
-        if (e.target === containerRef.current) handlePointInteraction(null);
+        if (e.target === containerRef.current) {
+           handlePointInteraction(null); // Clear point tooltip
+           setClickedAxisInfo(null);     // Clear clicked axis info
+        }
       }}
-      onWheel={handleWheelZoom} // Add wheel event listener
+      onWheel={handleWheelZoom}
     >
       {dimensions.width > 0 && dimensions.height > 0 && (
         <svg width="100%" height="100%" onClick={handleSvgClick}>
@@ -568,7 +611,7 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
           {phInfo && intersectPoint && dimensions.width > 0 && dimensions.height > 0 && (
             <g className="ph-indicator">
               {(() => {
-                const screenIntersect = getScreenCoordinates(intersectPoint);
+                const screenIntersect = getScreenCoordinates({ x: intersectPoint.xVal, y: intersectPoint.yVal });
                 // Basic check to see if intersection is visible
                 if (screenIntersect.x < padding.left || screenIntersect.x > dimensions.width - padding.right ||
                     screenIntersect.y < padding.top || screenIntersect.y > dimensions.height - padding.bottom) {
@@ -589,15 +632,16 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
                   valueOnOtherAxisScreenY = dimensions.height - padding.bottom + (isMobile ? 10 : 15);
                 }
 
-                // Further checks to ensure lines start/end within visible plot area
-                const lineToGraphStartX = Math.max(padding.left, Math.min(ph7OnAxisScreenX, dimensions.width - padding.right));
-                const lineToGraphStartY = Math.max(padding.top, Math.min(ph7OnAxisScreenY, dimensions.height - padding.bottom));
-                const lineToGraphEndX = Math.max(padding.left, Math.min(screenIntersect.x, dimensions.width - padding.right));
-                const lineToGraphEndY = Math.max(padding.top, Math.min(screenIntersect.y, dimensions.height - padding.bottom));
+                // The variables below were intended for clamping lines to the plot area,
+                // but the <line> elements below use the unclamped screenIntersect and axis positions directly.
+                // Removing these unused variables to resolve TS6133.
+                // const lineToGraphStartX = Math.max(padding.left, Math.min(ph7OnAxisScreenX, dimensions.width - padding.right));
+                // const lineToGraphStartY = Math.max(padding.top, Math.min(ph7OnAxisScreenY, dimensions.height - padding.bottom));
+                // const lineToGraphEndX = Math.max(padding.left, Math.min(screenIntersect.x, dimensions.width - padding.right));
+                // const lineToGraphEndY = Math.max(padding.top, Math.min(screenIntersect.y, dimensions.height - padding.bottom));
 
-                const lineToOtherAxisEndX = phInfo.axis === 'x' ? padding.left : lineToGraphEndX;
-                const lineToOtherAxisEndY = phInfo.axis === 'x' ? lineToGraphEndY : dimensions.height - padding.bottom;
-
+                // const lineToOtherAxisEndX = phInfo.axis === 'x' ? padding.left : lineToGraphEndX;
+                // const lineToOtherAxisEndY = phInfo.axis === 'x' ? lineToGraphEndY : dimensions.height - padding.bottom;
 
                 return (
                   <>
