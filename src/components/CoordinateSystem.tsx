@@ -40,6 +40,12 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
 
   const isMobile = useIsMobile();
 
+  const padding = React.useMemo(() => {
+    return isMobile
+        ? { left: 35, right: 15, top: 15, bottom: 35 }
+        : { left: 50, right: 20, top: 20, bottom: 50 };
+  }, [isMobile]);
+
   const handleWheelZoom = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (!containerRef.current || !dimensions.width || !dimensions.height || !initialView) return;
     event.preventDefault();
@@ -72,10 +78,6 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
         setHoveredPointIndex(null);
     }
   }, [scale, offset, dimensions, padding, initialView, hoveredPointIndex, onHoverPoint]);
-
-  const padding = isMobile
-    ? { left: 35, right: 15, top: 15, bottom: 35 }
-    : { left: 50, right: 20, top: 20, bottom: 50 };
 
   const phInfo = React.useMemo(() => {
     const xIsPh = xAxisLabel.toLowerCase().includes('ph');
@@ -202,7 +204,7 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
         resizeObserver.unobserve(containerRef.current);
       }
     };
-  }, [points, containerRef.current, padding, initialView]); // Added initialView to dep array
+  }, [points, padding, initialView]); // Removed containerRef.current from deps, it's a ref.
 
   useEffect(() => {
     if (!phInfo || points.length < 2) { // pH line requires at least 2 points for interpolation
@@ -238,15 +240,15 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
   }, [points, phInfo, xAxisLabel, yAxisLabel, interpolateValue]);
 
     // Konvertiere Datenpunkte in Bildschirmkoordinaten
-  const getScreenCoordinates = (point: Point) => {
+  const getScreenCoordinates = React.useCallback((point: Point) => {
     const x = ((point.x - offset.x) * scale.x) + padding.left;
     // Y-Achse ist umgekehrt im Bildschirm-Koordinatensystem
     const y = dimensions.height - (((point.y - offset.y) * scale.y) + padding.bottom);
     return { x, y };
-  };
+  }, [scale, offset, dimensions, padding]); // Added dependencies
 
   // Generiere SVG-Pfad für die Linien
-  const generatePath = () => {
+  const generatePath = React.useCallback(() => {
     if (points.length < 2) return '';
 
     const screenPoints = points.map(getScreenCoordinates);
@@ -270,10 +272,10 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
       
       return path;
     }
-  };
+  }, [points, getScreenCoordinates, lineStyle]); // Added dependencies
 
   // Behandle Punktinteraktion (Hover oder Klick/Touch)
-  const handlePointInteraction = (index: number | null) => {
+  const handlePointInteraction = React.useCallback((index: number | null) => {
     if (index === null) {
       setHoveredPointIndex(null);
       onHoverPoint(null);
@@ -282,14 +284,14 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
     setHoveredPointIndex(index);
     onHoverPoint(points[index]);
     
-    if (containerRef.current) {
+    if (containerRef.current) { // containerRef.current can be null if component unmounts
       const screenPoint = getScreenCoordinates(points[index]);
       const yOffset = isMobile ? -30 : -20; // Tooltip weiter oben auf Mobilgeräten
       setTooltipPos({ x: screenPoint.x, y: screenPoint.y + yOffset });
     }
-  };
+  }, [points, getScreenCoordinates, onHoverPoint, isMobile, setHoveredPointIndex, setTooltipPos]); // Added dependencies
 
-  const handleSvgClick = (event: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgClick = React.useCallback((event: React.MouseEvent<SVGSVGElement>) => {
     let targetIsTick = false;
     if (event.target instanceof SVGTextElement && event.target.classList.contains('axis-tick-value')) {
       targetIsTick = true;
@@ -299,9 +301,9 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
       handlePointInteraction(null); // Dismiss point tooltip
       setClickedAxisInfo(null);     // Dismiss clicked axis info
     }
-  };
+  }, [handlePointInteraction, setClickedAxisInfo]); // Added dependencies
 
-  const handleAxisTickClick = (axis: 'x' | 'y', value: number) => {
+  const handleAxisTickClick = React.useCallback((axis: 'x' | 'y', value: number) => {
      // Axis click requires at least 1 point for exact match, 2 for interpolation via interpolateValue
     if (points.length < 1) {
       setClickedAxisInfo(null);
@@ -340,11 +342,11 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
     } else {
       setClickedAxisInfo(null);
     }
-  };
+  }, [points, interpolateValue, getScreenCoordinates, offset, dimensions, padding, handlePointInteraction, setClickedAxisInfo]); // Added dependencies
 
 
   // Generiere Achsenbeschriftungen und Markierungen
-  const generateAxisLabels = () => {
+  const generateAxisLabels = React.useCallback(() => {
     if (!dimensions.width || !dimensions.height || points.length === 0) return null;
 
     const calculateNiceTicks = (visibleMin: number, visibleMax: number) => {
@@ -488,7 +490,7 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
         </text>
       </>
     );
-  };
+  }, [dimensions, points, scale, offset, padding, isMobile, xAxisLabel, yAxisLabel, handleAxisTickClick]); // Added dependencies
 
   if (points.length === 0) {
     return (
@@ -632,17 +634,15 @@ const CoordinateSystem: React.FC<CoordinateSystemProps> = ({
                   valueOnOtherAxisScreenY = dimensions.height - padding.bottom + (isMobile ? 10 : 15);
                 }
 
-                // The variables below were intended for clamping lines to the plot area,
-                // but the <line> elements below use the unclamped screenIntersect and axis positions directly.
-                // Removing these unused variables to resolve TS6133.
+                // The clamping logic using the variables below was not being applied to the <line> elements.
+                // The lines are drawn using ph7OnAxisScreenX/Y and screenIntersect directly.
+                // These variables are therefore unused and are removed to fix TS6133.
                 // const lineToGraphStartX = Math.max(padding.left, Math.min(ph7OnAxisScreenX, dimensions.width - padding.right));
                 // const lineToGraphStartY = Math.max(padding.top, Math.min(ph7OnAxisScreenY, dimensions.height - padding.bottom));
                 // const lineToGraphEndX = Math.max(padding.left, Math.min(screenIntersect.x, dimensions.width - padding.right));
                 // const lineToGraphEndY = Math.max(padding.top, Math.min(screenIntersect.y, dimensions.height - padding.bottom));
-
                 // const lineToOtherAxisEndX = phInfo.axis === 'x' ? padding.left : lineToGraphEndX;
                 // const lineToOtherAxisEndY = phInfo.axis === 'x' ? lineToGraphEndY : dimensions.height - padding.bottom;
-
                 return (
                   <>
                     {/* Line from pH axis to graph line */}
