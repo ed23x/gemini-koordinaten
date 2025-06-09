@@ -1,46 +1,111 @@
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
 
-const StyledWrapper = styled.div`
-  @keyframes loader_5191 {
-    from { opacity: 0; }
-    to { opacity: 1; }
+// Keyframes definition
+const ballL53 = keyframes`
+  0%, 50% { transform: rotate(0) translateX(0); }
+  100% { transform: rotate(50deg) translateX(-2.5em); }
+`;
+
+const ballR53 = keyframes`
+  0%, 50% { transform: rotate(0) translateX(0); }
+  100% { transform: rotate(-50deg) translateX(2.5em); }
+`;
+
+const shadowLN53 = keyframes`
+  0%, 50% { transform: rotate(0) translateX(0); }
+  100% { transform: rotate(25deg) translateX(-1.25em); }
+`;
+
+const shadowRN53 = keyframes`
+  0%, 50% { transform: rotate(0) translateX(0); }
+  100% { transform: rotate(-25deg) translateX(1.25em); }
+`;
+
+const StyledLoaderWrapper = styled.div`
+  /* Base styles for centering and font size */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1rem; /* Base for em units */
+
+  .swing {
+    display: flex; /* Using flex instead of float */
+    justify-content: center;
+    align-items: center;
   }
 
-  .square {
-    background: var(--loader-square-bg, #ddd); // Use CSS variable
-    width: 10px;
-    height: 10px;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    margin-top: -5px;
-    margin-left: -5px;
+  .swing div {
+    border-radius: 50%;
+    height: 1em;
+    width: 1em;
+    margin: 0 0.1em; /* Spacing between balls */
   }
 
-  #sq1 { margin-top: -25px; margin-left: -25px; animation: loader_5191 675ms ease-in-out 0s infinite alternate; }
-  #sq2 { margin-top: -25px; animation: loader_5191 675ms ease-in-out 75ms infinite alternate; }
-  #sq3 { margin-top: -25px; margin-left: 15px; animation: loader_5191 675ms ease-in-out 150ms infinite; }
-  #sq4 { margin-left: -25px; animation: loader_5191 675ms ease-in-out 225ms infinite; }
-  #sq5 { animation: loader_5191 675ms ease-in-out 300ms infinite; }
-  #sq6 { margin-left: 15px; animation: loader_5191 675ms ease-in-out 375ms infinite; }
-  #sq7 { margin-top: 15px; margin-left: -25px; animation: loader_5191 675ms ease-in-out 450ms infinite; }
-  #sq8 { margin-top: 15px; animation: loader_5191 675ms ease-in-out 525ms infinite; }
-  #sq9 { margin-top: 15px; margin-left: 15px; animation: loader_5191 675ms ease-in-out 600ms infinite; }
+  .swing div:nth-of-type(1) { background: linear-gradient(to right, #385c78 0%, #325774 100%); }
+  .swing div:nth-of-type(2) { background: linear-gradient(to right, #325774 0%, #47536a 100%); }
+  .swing div:nth-of-type(3) { background: linear-gradient(to right, #47536a 0%, #4f4f5e 100%); }
+  .swing div:nth-of-type(4) { background: linear-gradient(to right, #4f4f5e 0%, #624850 100%); }
+  .swing div:nth-of-type(5) { background: linear-gradient(to right, #624850 0%, #783f41 100%); }
+  .swing div:nth-of-type(6) { background: linear-gradient(to right, #783f41 0%, #a03231 100%); }
+  .swing div:nth-of-type(7) { background: linear-gradient(to right, #a03231 0%, #d92525 100%); }
+
+  .swing-l {
+    animation: ${ballL53} 0.425s ease-in-out infinite alternate;
+  }
+  .swing-r {
+    animation: ${ballR53} 0.425s ease-in-out infinite alternate;
+  }
+
+  .shadow {
+    display: flex; /* Using flex instead of float + clear */
+    justify-content: center;
+    align-items: center;
+    padding-top: 1.5em; /* Original padding-top */
+  }
+
+  .shadow div {
+    filter: blur(1px);
+    width: 1em;
+    height: 0.25em;
+    border-radius: 50%;
+    background: #c0c0c0; /* Adjusted from #e3dbd2 */
+    margin: 0 0.1em; /* Spacing between shadow elements */
+  }
+
+  .shadow-l {
+    background: #b0b0b0; /* Adjusted from #d5d8d6 */
+    animation: ${shadowLN53} 0.425s ease-in-out infinite alternate;
+  }
+
+  .shadow-r {
+    background: #d0b0a0; /* Adjusted from #eed3ca */
+    animation: ${shadowRN53} 0.425s ease-in-out infinite alternate;
+  }
 `;
 
 const Loader = () => {
   return (
-    <StyledWrapper>
-      <div className="square" id="sq1"></div>
-      <div className="square" id="sq2"></div>
-      <div className="square" id="sq3"></div>
-      <div className="square" id="sq4"></div>
-      <div className="square" id="sq5"></div>
-      <div className="square" id="sq6"></div>
-      <div className="square" id="sq7"></div>
-      <div className="square" id="sq8"></div>
-      <div className="square" id="sq9"></div>
-    </StyledWrapper>
+    <StyledLoaderWrapper aria-busy="true" aria-label="Loading" role="progressbar">
+      <div className="swing">
+        <div className="swing-l"></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div className="swing-r"></div>
+      </div>
+      <div className="shadow">
+        <div className="shadow-l"></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+        <div className="shadow-r"></div>
+      </div>
+    </StyledLoaderWrapper>
   );
 };
 
