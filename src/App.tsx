@@ -193,27 +193,50 @@ function App() {
     if (!coordinateSystemRef.current || points.length === 0) return;
     
     try {
-      // SVG in Canvas umwandeln und als PNG exportieren
       const svgElement = coordinateSystemRef.current.querySelector('svg');
       if (!svgElement) return;
+
+      const clonedSvgElement = svgElement.cloneNode(true) as SVGSVGElement;
+
+      // Function to recursively apply styles
+      function inlineStyles(element: Element) {
+        const computedStyle = getComputedStyle(element);
+        let styleString = "";
+        for (let i = 0; i < computedStyle.length; i++) {
+          const prop = computedStyle[i];
+          styleString += `${prop}:${computedStyle.getPropertyValue(prop)};`;
+        }
+        element.setAttribute('style', styleString);
+
+        const children = element.children;
+        for (let i = 0; i < children.length; i++) {
+          inlineStyles(children[i]);
+        }
+      }
+
+      inlineStyles(clonedSvgElement); // Apply styles to the clone
       
-      const svgData = new XMLSerializer().serializeToString(svgElement);
+      // Determine background color based on theme for the SVG itself (fallback, canvas bg is primary)
+      const isDarkMode = document.documentElement.classList.contains('dark');
+      clonedSvgElement.style.backgroundColor = isDarkMode ? '#09090b' : '#ffffff';
+
+
+      const svgData = new XMLSerializer().serializeToString(clonedSvgElement);
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       
       if (!ctx) return;
       
-      // Setze Canvas-Größe
-      const rect = svgElement.getBoundingClientRect();
+      const rect = svgElement.getBoundingClientRect(); // Use original SVG for size
       canvas.width = rect.width;
       canvas.height = rect.height;
       
-      // Zeichne weißen Hintergrund
-      ctx.fillStyle = 'white';
+      // Set canvas background based on theme
+      ctx.fillStyle = isDarkMode ? '#09090b' : '#ffffff'; // zinc-950 or white
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // Konvertiere SVG zu Bild
       const img = new Image();
+      // Ensure proper encoding for SVG with special characters
       const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(svgBlob);
       
