@@ -4,6 +4,7 @@ import { Input } from "./components/ui/input";
 import { Sun, Moon } from "lucide-react";
 import { Label } from "./components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import { Groq } from 'groq-sdk';
 import {
   Card,
   CardContent,
@@ -31,8 +32,6 @@ interface Point {
 
 function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
-  const [apiKey, setApiKey] = useState<string>("");
-  const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [xAxisLabel, setXAxisLabel] = useState<string>("pH"); // Test X-axis pH
   const [yAxisLabel, setYAxisLabel] = useState<string>("Concentration"); // Test Y-axis pH
   const [lineStyle, setLineStyle] = useState<"eckig" | "gerundet">("gerundet");
@@ -59,36 +58,10 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Cookie-Handling für API-Schlüssel
-  useEffect(() => {
-    const savedApiKey = getCookie("geminiApiKey");
-    if (savedApiKey) {
-      setApiKey(savedApiKey);
-    }
-  }, []);
-
-  const saveApiKey = () => {
-    if (apiKey) {
-      setCookie("geminiApiKey", apiKey, 30); // Speichert für 30 Tage
-    }
-  };
-
-  const setCookie = (name: string, value: string, days: number) => {
-    const expires = new Date();
-    expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-    document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=Strict`;
-  };
-
-  const getCookie = (name: string): string => {
-    const nameEQ = name + "=";
-    const ca = document.cookie.split(";");
-    for (let i = 0; i < ca.length; i++) {
-      let c = ca[i];
-      while (c.charAt(0) === " ") c = c.substring(1, c.length);
-      if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-    }
-    return "";
-  };
+  // Initialize Groq client
+  const groq = new Groq({
+    apiKey: import.meta.env.VITE_GROQ_API_KEY || process.env.VITE_GROQ_API_KEY
+  });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -98,7 +71,7 @@ function App() {
   };
 
   const processFile = async () => {
-    if (!selectedFile || !apiKey) return;
+    if (!selectedFile) return;
 
     setIsProcessing(true);
     setProcessingError(null);
@@ -107,7 +80,7 @@ function App() {
       // Datei als Base64 kodieren
       const fileBase64 = await readFileAsBase64(selectedFile);
 
-      // Gemini API-Anfrage vorbereiten
+      // Prepare the prompt
       const prompt = `
         Analysiere die hochgeladene Datei und extrahiere daraus Punkte für ein Koordinatensystem.
         Die X-Achse repräsentiert "${xAxisLabel}" und die Y-Achse repräsentiert "${yAxisLabel}".
@@ -117,55 +90,40 @@ function App() {
         Gib NUR das JSON-Array zurück, ohne zusätzlichen Text.
       `;
 
-      // Gemini API aufrufen
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [
+      // Call Groq API
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [
+          {
+            role: "user",
+            content: [
               {
-                parts: [
-                  { text: prompt },
-                  {
-                    inline_data: {
-                      mime_type: selectedFile.type,
-                      data: fileBase64.split(",")[1], // Entferne den MIME-Typ-Präfix
-                    },
-                  },
-                ],
+                type: "text",
+                text: prompt
               },
-            ],
-            generation_config: {
-              temperature: 0.2,
-              top_p: 0.8,
-              top_k: 40,
-            },
-          }),
-        },
-      );
+              {
+                type: "image_url",
+                image_url: {
+                  url: fileBase64
+                }
+              }
+            ]
+          }
+        ],
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        temperature: 0.2,
+        max_completion_tokens: 1024,
+        top_p: 0.8,
+        stream: false,
+        stop: null
+      });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error?.message || "Fehler bei der API-Anfrage",
-        );
-      }
-
-      const data = await response.json();
-
-      // Extrahiere die Antwort und parse das JSON
-      const responseText = data.candidates[0]?.content?.parts[0]?.text;
+      const responseText = chatCompletion.choices[0].message.content;
 
       if (!responseText) {
         throw new Error("Keine Antwort von der API erhalten");
       }
 
-      // Versuche, JSON aus der Antwort zu extrahieren
+      // Try to extract JSON from the response
       const jsonMatch = responseText.match(/\[.*\]/s);
       if (!jsonMatch) {
         throw new Error("Konnte kein JSON-Array in der Antwort finden");
@@ -174,17 +132,17 @@ function App() {
       const extractedJson = jsonMatch[0];
       const parsedPoints = JSON.parse(extractedJson);
 
-      // Validiere die Punkte
+      // Validate the points
       if (!Array.isArray(parsedPoints)) {
         throw new Error("Die API hat kein gültiges Array zurückgegeben");
       }
 
       const validPoints = parsedPoints.filter(
-        (point) =>
+        (point: any) =>
           typeof point === "object" &&
           point !== null &&
           typeof point.x === "number" &&
-          typeof point.y === "number",
+          typeof point.y === "number"
       );
 
       if (validPoints.length === 0) {
@@ -210,9 +168,29 @@ function App() {
   const readFileAsBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+      reader.onload = () => {
+        // Ensure the result is a string
+        const result = reader.result as string;
+        // If it's already a data URL, use it directly
+        if (result.startsWith('data:')) {
+          resolve(result);
+        } else {
+          // Otherwise, convert to a data URL
+          const base64 = btoa(
+            new Uint8Array(reader.result as ArrayBuffer)
+              .reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+          resolve(`data:${file.type};base64,${base64}`);
+        }
+      };
+      reader.onerror = (error) => reject(error);
+      
+      // Read as data URL for images, array buffer for other files
+      if (file.type.startsWith('image/')) {
+        reader.readAsDataURL(file);
+      } else {
+        reader.readAsArrayBuffer(file);
+      }
     });
   };
 
