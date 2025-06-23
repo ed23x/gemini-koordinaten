@@ -1,28 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Download, Upload } from "lucide-react";
 import { Label } from "./components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { Groq } from 'groq-sdk';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "./components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./components/ui/select";
-import { Download, Save, Eye, EyeOff } from "lucide-react";
-import CoordinateSystem from "./components/CoordinateSystem";
-import Loader from "./components/Loader";
+import { groq } from '@ai-sdk/groq';
+import { generateText } from 'ai';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { Toaster } from "./components/ui/toaster";
+import { useToast } from "./components/ui/use-toast";
 import "./App.css";
 
 interface Point {
@@ -32,22 +19,18 @@ interface Point {
 
 function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
-  const [xAxisLabel, setXAxisLabel] = useState<string>("pH"); // Test X-axis pH
-  const [yAxisLabel, setYAxisLabel] = useState<string>("Concentration"); // Test Y-axis pH
+  const [xAxisLabel, setXAxisLabel] = useState<string>("X-Axis");
+  const [yAxisLabel, setYAxisLabel] = useState<string>("Y-Axis");
   const [lineStyle, setLineStyle] = useState<"eckig" | "gerundet">("gerundet");
-  const [points, setPoints] = useState<Point[]>([
-    { x: 5, y: 10 },
-    { x: 6, y: 12 },
-    { x: 7.5, y: 18 },
-    { x: 8, y: 20 },
-    { x: 9, y: 15 }, // Sample data for pH on X
-    // To test Y-axis pH: set yAxisLabel to 'pH' and points e.g. [{ x: 10, y: 5 }, { x: 12, y: 8 }]
-  ]);
+  const [points, setPoints] = useState<Point[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Set to false to show graph
-  const [hoveredPoint, setHoveredPoint] = useState<Point | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
+  
+  const { toast } = useToast();
   const coordinateSystemRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (theme === "dark") {
@@ -58,110 +41,10 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Initialize Groq client
-  const groq = new Groq({
-    apiKey: import.meta.env.VITE_GROQ_API_KEY || process.env.VITE_GROQ_API_KEY
-  });
-
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
+    if (event.target.files?.[0]) {
       setSelectedFile(event.target.files[0]);
       setProcessingError(null);
-    }
-  };
-
-  const processFile = async () => {
-    if (!selectedFile) return;
-
-    setIsProcessing(true);
-    setProcessingError(null);
-
-    try {
-      // Datei als Base64 kodieren
-      const fileBase64 = await readFileAsBase64(selectedFile);
-
-      // Prepare the prompt
-      const prompt = `
-        Analysiere die hochgeladene Datei und extrahiere daraus Punkte für ein Koordinatensystem.
-        Die X-Achse repräsentiert "${xAxisLabel}" und die Y-Achse repräsentiert "${yAxisLabel}".
-        Gib die Punkte als JSON-Array im folgenden Format zurück:
-        [{"x": Wert, "y": Wert}, {"x": Wert, "y": Wert}, ...]
-        Achte darauf, dass die Werte numerisch sind und keine Strings.
-        Gib NUR das JSON-Array zurück, ohne zusätzlichen Text.
-      `;
-
-      // Call Groq API
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: prompt
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: fileBase64
-                }
-              }
-            ]
-          }
-        ],
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        temperature: 0.2,
-        max_completion_tokens: 1024,
-        top_p: 0.8,
-        stream: false,
-        stop: null
-      });
-
-      const responseText = chatCompletion.choices[0].message.content;
-
-      if (!responseText) {
-        throw new Error("Keine Antwort von der API erhalten");
-      }
-
-      // Try to extract JSON from the response
-      const jsonMatch = responseText.match(/\[.*\]/s);
-      if (!jsonMatch) {
-        throw new Error("Konnte kein JSON-Array in der Antwort finden");
-      }
-
-      const extractedJson = jsonMatch[0];
-      const parsedPoints = JSON.parse(extractedJson);
-
-      // Validate the points
-      if (!Array.isArray(parsedPoints)) {
-        throw new Error("Die API hat kein gültiges Array zurückgegeben");
-      }
-
-      const validPoints = parsedPoints.filter(
-        (point: any) =>
-          typeof point === "object" &&
-          point !== null &&
-          typeof point.x === "number" &&
-          typeof point.y === "number"
-      );
-
-      if (validPoints.length === 0) {
-        throw new Error("Keine gültigen Punkte gefunden");
-      }
-
-      // Sortiere die Punkte nach X-Wert
-      validPoints.sort((a, b) => a.x - b.x);
-
-      setPoints(validPoints);
-    } catch (error) {
-      console.error("Fehler bei der Verarbeitung:", error);
-      setProcessingError(
-        error instanceof Error
-          ? error.message
-          : "Unbekannter Fehler bei der Verarbeitung",
-      );
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -169,13 +52,10 @@ function App() {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        // Ensure the result is a string
         const result = reader.result as string;
-        // If it's already a data URL, use it directly
         if (result.startsWith('data:')) {
           resolve(result);
         } else {
-          // Otherwise, convert to a data URL
           const base64 = btoa(
             new Uint8Array(reader.result as ArrayBuffer)
               .reduce((data, byte) => data + String.fromCharCode(byte), '')
@@ -185,7 +65,6 @@ function App() {
       };
       reader.onerror = (error) => reject(error);
       
-      // Read as data URL for images, array buffer for other files
       if (file.type.startsWith('image/')) {
         reader.readAsDataURL(file);
       } else {
@@ -194,369 +73,338 @@ function App() {
     });
   };
 
+  const processFile = async () => {
+    if (!selectedFile) return;
+    
+    setIsProcessing(true);
+    setProcessingError(null);
+
+    try {
+      const base64Data = await readFileAsBase64(selectedFile);
+      
+      const { text } = await generateText({
+        model: groq('meta-llama/llama-4-scout-17b-16e-instruct'),
+        messages: [{
+          role: 'user',
+          content: [
+            { 
+              type: 'text', 
+              text: 'Extract coordinate points from this image and return them as a JSON array of objects with x and y properties. For example: [{"x": 1, "y": 2}, {"x": 3, "y": 4}]. Only return the JSON array, no other text.' 
+            },
+            { 
+              type: 'image', 
+              image: base64Data 
+            }
+          ]
+        }]
+      });
+      
+      const jsonMatch = text.match(/\[.*\]/s);
+      if (!jsonMatch) {
+        throw new Error('No coordinate points found in the response');
+      }
+      
+      const parsedPoints = JSON.parse(jsonMatch[0]);
+      
+      if (!Array.isArray(parsedPoints) || 
+          !parsedPoints.every((p: any) => 
+            typeof p === 'object' && 
+            p !== null && 
+            typeof p.x === 'number' && 
+            typeof p.y === 'number'
+          )
+      ) {
+        throw new Error('Invalid points format');
+      }
+      
+      setPoints(parsedPoints);
+      toast({
+        title: 'Success',
+        description: `Successfully extracted ${parsedPoints.length} points from the image`,
+        variant: 'default',
+      });
+    } catch (error) {
+      console.error('Error processing file:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process file';
+      setProcessingError(errorMessage);
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const exportAsImage = () => {
-    if (!coordinateSystemRef.current || points.length === 0) return;
+    if (!coordinateSystemRef.current) return;
 
     try {
       const svgElement = coordinateSystemRef.current.querySelector("svg");
       if (!svgElement) return;
 
       const clonedSvgElement = svgElement.cloneNode(true) as SVGSVGElement;
-
-      // Function to recursively apply styles
-      function inlineStyles(element: Element) {
-        const computedStyle = getComputedStyle(element);
-        let styleString = "";
-        for (let i = 0; i < computedStyle.length; i++) {
-          const prop = computedStyle[i];
-          styleString += `${prop}:${computedStyle.getPropertyValue(prop)};`;
-        }
-        element.setAttribute("style", styleString);
-
-        const children = element.children;
-        for (let i = 0; i < children.length; i++) {
-          inlineStyles(children[i]);
-        }
-      }
-
-      inlineStyles(clonedSvgElement); // Apply styles to the clone
-
-      // Determine background color based on theme for the SVG itself (fallback, canvas bg is primary)
-      const isDarkMode = document.documentElement.classList.contains("dark");
-      clonedSvgElement.style.backgroundColor = isDarkMode
-        ? "#09090b"
-        : "#ffffff";
-
-      const svgData = new XMLSerializer().serializeToString(clonedSvgElement);
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
-
       if (!ctx) return;
 
-      const rect = svgElement.getBoundingClientRect(); // Use original SVG for size
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-
-      // Set canvas background based on theme
-      ctx.fillStyle = isDarkMode ? "#09090b" : "#ffffff"; // zinc-950 or white
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+      const svgData = new XMLSerializer().serializeToString(clonedSvgElement);
       const img = new Image();
-      // Ensure proper encoding for SVG with special characters
-      const svgBlob = new Blob([svgData], {
-        type: "image/svg+xml;charset=utf-8",
-      });
+      const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(svgBlob);
 
       img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
         URL.revokeObjectURL(url);
 
-        // Exportiere als PNG
         const pngUrl = canvas.toDataURL("image/png");
         const downloadLink = document.createElement("a");
         downloadLink.href = pngUrl;
-        downloadLink.download = `${xAxisLabel}-${yAxisLabel}-koordinaten.png`;
+        downloadLink.download = `koordinaten-${new Date().toISOString().slice(0, 10)}.png`;
         document.body.appendChild(downloadLink);
         downloadLink.click();
         document.body.removeChild(downloadLink);
       };
 
+      img.onerror = () => {
+        setProcessingError("Error exporting image");
+      };
+
       img.src = url;
     } catch (error) {
-      console.error("Fehler beim Exportieren als Bild:", error);
-      alert("Fehler beim Exportieren als Bild. Bitte versuchen Sie es erneut.");
+      console.error("Error exporting image:", error);
+      setProcessingError("Error exporting image");
     }
   };
 
   const exportAsJson = () => {
     if (points.length === 0) return;
 
-    const data = {
-      points,
-      xAxisLabel,
-      yAxisLabel,
-      lineStyle,
-    };
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "koordinaten-daten.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const importJson = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      const file = event.target.files[0];
-      const reader = new FileReader();
-
-      reader.onload = (e) => {
-        try {
-          const content = e.target?.result as string;
-          const data = JSON.parse(content);
-
-          if (data.points && Array.isArray(data.points)) {
-            setPoints(data.points);
-            if (data.xAxisLabel) setXAxisLabel(data.xAxisLabel);
-            if (data.yAxisLabel) setYAxisLabel(data.yAxisLabel);
-            if (data.lineStyle) setLineStyle(data.lineStyle);
-          }
-        } catch (error) {
-          alert(
-            "Fehler beim Importieren der Datei. Bitte überprüfen Sie das Format.",
-          );
-        }
+    try {
+      const data = {
+        points,
+        xAxisLabel,
+        yAxisLabel,
+        lineStyle,
       };
 
-      reader.readAsText(file);
+      const dataStr = JSON.stringify(data, null, 2);
+      const dataUri = `data:application/json;charset=utf-8,${encodeURIComponent(dataStr)}`;
+      const exportName = `koordinaten-${new Date().toISOString().slice(0, 10)}.json`;
+
+      const linkElement = document.createElement("a");
+      linkElement.setAttribute("href", dataUri);
+      linkElement.setAttribute("download", exportName);
+      linkElement.click();
+    } catch (error) {
+      console.error("Error exporting JSON:", error);
+      setProcessingError("Error exporting JSON");
     }
   };
 
-  return (
-    <div className="container mx-auto p-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-center">
-          Gemini Koordinaten-Visualisierung
-        </h1>
-        <Button
-          onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-          variant="outline"
-          size="icon"
-        >
-          {theme === "light" ? (
-            <Moon className="h-[1.2rem] w-[1.2rem]" />
-          ) : (
-            <Sun className="h-[1.2rem] w-[1.2rem]" />
-          )}
-        </Button>
-      </div>
+  const importJson = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Linke Spalte: Einstellungen */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>API-Einstellungen</CardTitle>
-              <CardDescription>
-                Geben Sie Ihren Gemini API-Schlüssel ein
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <div className="grid w-full items-center gap-1.5">
-                    <Label htmlFor="apiKey">API-Schlüssel</Label>
-                    <div className="relative">
-                      <Input
-                        id="apiKey"
-                        type={showApiKey ? "text" : "password"}
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        placeholder="Gemini API-Schlüssel eingeben"
-                        className="pr-10"
-                        autoComplete="current-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute inset-y-0 right-0 flex items-center pr-3"
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.points && Array.isArray(data.points)) {
+          setPoints(data.points);
+          if (data.xAxisLabel) setXAxisLabel(data.xAxisLabel);
+          if (data.yAxisLabel) setYAxisLabel(data.yAxisLabel);
+          if (data.lineStyle) setLineStyle(data.lineStyle);
+          setProcessingError(null);
+          toast({
+            title: 'Success',
+            description: `Successfully imported ${data.points.length} points`,
+            variant: 'default',
+          });
+        } else {
+          throw new Error("Invalid file format");
+        }
+      } catch (error) {
+        console.error("Error importing JSON:", error);
+        setProcessingError("Error importing JSON file");
+      }
+    };
+    reader.onerror = () => setProcessingError("Error reading file");
+    reader.readAsText(file);
+  };
+
+  const triggerFileInput = () => fileInputRef.current?.click();
+  const triggerJsonInput = () => jsonInputRef.current?.click();
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b">
+        <div className="container flex h-16 items-center justify-between px-4">
+          <h1 className="text-xl font-semibold">Coordinate Extractor</h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+        </div>
+      </header>
+
+      <main className="container py-8">
+        <Tabs defaultValue="extract" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="extract">Extract Coordinates</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="extract" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Extract Coordinates from Image</CardTitle>
+                <CardDescription>
+                  Upload an image containing a graph or plot to extract coordinate points.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <Button onClick={triggerFileInput}>
+                      <Upload className="mr-2 h-4 w-4" />
+                      Select Image
+                    </Button>
+                    {selectedFile && (
+                      <span className="text-sm text-muted-foreground">
+                        {selectedFile.name}
+                      </span>
+                    )}
+                  </div>
+                  <Button 
+                    onClick={processFile} 
+                    disabled={!selectedFile || isProcessing}
+                  >
+                    {isProcessing ? 'Processing...' : 'Extract Coordinates'}
+                  </Button>
+                </div>
+
+                {processingError && (
+                  <div className="text-destructive text-sm">
+                    Error: {processingError}
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-medium">Extracted Points</h3>
+                    <div className="space-x-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={exportAsImage}
+                        disabled={points.length === 0}
                       >
-                        {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
+                        <Download className="mr-2 h-4 w-4" />
+                        Export as Image
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={exportAsJson}
+                        disabled={points.length === 0}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Export as JSON
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={triggerJsonInput}
+                      >
+                        <Upload className="mr-2 h-4 w-4" />
+                        Import JSON
+                        <Input
+                          type="file"
+                          ref={jsonInputRef}
+                          onChange={importJson}
+                          accept=".json"
+                          className="hidden"
+                        />
+                      </Button>
                     </div>
                   </div>
+                  
+                  {points.length > 0 ? (
+                    <div className="mt-2 rounded-md border p-4 font-mono text-sm">
+                      <pre>{JSON.stringify(points, null, 2)}</pre>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      No points extracted yet. Upload an image to get started.
+                    </div>
+                  )}
                 </div>
-                <Button onClick={saveApiKey} className="w-full">
-                  Speichern
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Achsenbeschriftung</CardTitle>
-              <CardDescription>
-                Definieren Sie die Bedeutung der Achsen
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="grid w-full items-center gap-1.5">
-                  <Label htmlFor="xAxis">X-Achse</Label>
-                  <Input
-                    id="xAxis"
-                    value={xAxisLabel}
-                    onChange={(e) => setXAxisLabel(e.target.value)}
-                    placeholder="z.B. Zeit, Temperatur, etc."
-                  />
+          <TabsContent value="settings">
+            <Card>
+              <CardHeader>
+                <CardTitle>Settings</CardTitle>
+                <CardDescription>
+                  Configure the coordinate system settings.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="xAxisLabel">X-Axis Label</Label>
+                    <Input
+                      id="xAxisLabel"
+                      value={xAxisLabel}
+                      onChange={(e) => setXAxisLabel(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="yAxisLabel">Y-Axis Label</Label>
+                    <Input
+                      id="yAxisLabel"
+                      value={yAxisLabel}
+                      onChange={(e) => setYAxisLabel(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lineStyle">Line Style</Label>
+                    <Select
+                      value={lineStyle}
+                      onValueChange={(value: "eckig" | "gerundet") => setLineStyle(value)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select line style" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gerundet">Smooth</SelectItem>
+                        <SelectItem value="eckig">Sharp</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="grid w-full items-center gap-1.5">
-                  <Label htmlFor="yAxis">Y-Achse</Label>
-                  <Input
-                    id="yAxis"
-                    value={yAxisLabel}
-                    onChange={(e) => setYAxisLabel(e.target.value)}
-                    placeholder="z.B. Wert, Menge, etc."
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Linienoptionen</CardTitle>
-              <CardDescription>
-                Anpassung der Linienverbindungen
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="lineStyle">Linienstil</Label>
-                  <Select
-                    value={lineStyle}
-                    onValueChange={(value) =>
-                      setLineStyle(value as "eckig" | "gerundet")
-                    }
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Linienstil wählen" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="gerundet">Gerundet</SelectItem>
-                      <SelectItem value="eckig">Eckig</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Mittlere Spalte: Koordinatensystem */}
-        <div className="md:col-span-2">
-          <Card className="h-full">
-            <CardHeader>
-              <CardTitle>Koordinatensystem</CardTitle>
-              <CardDescription>
-                {hoveredPoint
-                  ? `Punkt: X=${hoveredPoint.x.toFixed(2)}, Y=${hoveredPoint.y.toFixed(2)}`
-                  : "Bewegen Sie den Mauszeiger über einen Punkt für Details"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent
-              className="h-[300px] sm:h-[400px] border rounded-md relative"
-              ref={coordinateSystemRef}
-            >
-              {isProcessing ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-zinc-950">
-                  <Loader />
-                </div>
-              ) : (
-                <CoordinateSystem
-                  points={points}
-                  xAxisLabel={xAxisLabel}
-                  yAxisLabel={yAxisLabel}
-                  lineStyle={lineStyle}
-                  onHoverPoint={setHoveredPoint}
-                />
-              )}
-            </CardContent>
-            <CardFooter className="flex justify-between">
-              <div className="flex space-x-2">
-                <Button
-                  onClick={exportAsImage}
-                  variant="outline"
-                  size="sm"
-                  disabled={points.length === 0}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Als Bild exportieren
-                </Button>
-                <Button
-                  onClick={exportAsJson}
-                  variant="outline"
-                  size="sm"
-                  disabled={points.length === 0}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  JSON exportieren
-                </Button>
-              </div>
-            </CardFooter>
-          </Card>
-        </div>
-      </div>
-
-      {/* Unterer Bereich: Datei-Upload und Import */}
-      <div className="mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Daten verarbeiten</CardTitle>
-            <CardDescription>
-              Laden Sie Dateien hoch oder importieren Sie vorhandene Daten
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="upload">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="upload">Datei hochladen</TabsTrigger>
-                <TabsTrigger value="import">JSON importieren</TabsTrigger>
-              </TabsList>
-              <TabsContent value="upload" className="space-y-4 mt-4">
-                <div className="grid w-full items-center gap-1.5">
-                  <Label htmlFor="fileUpload">Datei auswählen</Label>
-                  <Input
-                    id="fileUpload"
-                    type="file"
-                    onChange={handleFileChange}
-                  />
-                  <p className="text-sm text-gray-500">
-                    Unterstützte Dateitypen: Bilder, PDFs, Textdateien, Tabellen
-                  </p>
-                </div>
-                <Button
-                  onClick={processFile}
-                  disabled={!selectedFile || isProcessing || !apiKey}
-                  className="w-full"
-                >
-                  {isProcessing ? "Verarbeite..." : "Mit Gemini verarbeiten"}
-                </Button>
-                {!apiKey && (
-                  <p className="text-sm text-red-500">
-                    Bitte geben Sie zuerst einen API-Schlüssel ein
-                  </p>
-                )}
-                {processingError && (
-                  <p className="text-sm text-red-500">
-                    Fehler: {processingError}
-                  </p>
-                )}
-              </TabsContent>
-              <TabsContent value="import" className="space-y-4 mt-4">
-                <div className="grid w-full items-center gap-1.5">
-                  <Label htmlFor="jsonImport">JSON-Datei auswählen</Label>
-                  <Input
-                    id="jsonImport"
-                    type="file"
-                    accept=".json"
-                    onChange={importJson}
-                  />
-                </div>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </main>
+      <Toaster />
     </div>
   );
 }
