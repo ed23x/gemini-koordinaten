@@ -3,6 +3,8 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Sun, Moon } from "lucide-react";
 import { Label } from "./components/ui/label";
+import { groq } from '@ai-sdk/groq';
+import { generateText, CoreMessage } from 'ai';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
   Card,
@@ -31,8 +33,6 @@ interface Point {
 
 function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
-  const [apiKey, setApiKey] = useState<string>("");
-  const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [xAxisLabel, setXAxisLabel] = useState<string>("pH"); // Test X-axis pH
   const [yAxisLabel, setYAxisLabel] = useState<string>("Concentration"); // Test Y-axis pH
   const [lineStyle, setLineStyle] = useState<"eckig" | "gerundet">("gerundet");
@@ -59,37 +59,6 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Cookie-Handling für API-Schlüssel
-  useEffect(() => {
-    const savedApiKey = getCookie("geminiApiKey");
-    if (savedApiKey) {
-      setApiKey(savedApiKey);
-    }
-  }, []);
-
-  const saveApiKey = () => {
-    if (apiKey) {
-      setCookie("geminiApiKey", apiKey, 30); // Speichert für 30 Tage
-    }
-  };
-
-  const setCookie = (name: string, value: string, days: number) => {
-    const expires = new Date();
-    expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-    document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=Strict`;
-  };
-
-  const getCookie = (name: string): string => {
-    const nameEQ = name + "=";
-    const ca = document.cookie.split(";");
-    for (let i = 0; i < ca.length; i++) {
-      let c = ca[i];
-      while (c.charAt(0) === " ") c = c.substring(1, c.length);
-      if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-    }
-    return "";
-  };
-
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       setSelectedFile(event.target.files[0]);
@@ -98,83 +67,78 @@ function App() {
   };
 
   const processFile = async () => {
-    if (!selectedFile || !apiKey) return;
+    if (!selectedFile) return;
 
     setIsProcessing(true);
     setProcessingError(null);
 
     try {
-      // Datei als Base64 kodieren
       const fileBase64 = await readFileAsBase64(selectedFile);
 
-      // Gemini API-Anfrage vorbereiten
-      const prompt = `
-        Analysiere die hochgeladene Datei und extrahiere daraus Punkte für ein Koordinatensystem.
-        Die X-Achse repräsentiert "${xAxisLabel}" und die Y-Achse repräsentiert "${yAxisLabel}".
-        Gib die Punkte als JSON-Array im folgenden Format zurück:
-        [{"x": Wert, "y": Wert}, {"x": Wert, "y": Wert}, ...]
-        Achte darauf, dass die Werte numerisch sind und keine Strings.
-        Gib NUR das JSON-Array zurück, ohne zusätzlichen Text.
-      `;
-
-      // Gemini API aufrufen
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent",
+      const messages: CoreMessage[] = [
         {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: prompt },
-                  {
-                    inline_data: {
-                      mime_type: selectedFile.type,
-                      data: fileBase64.split(",")[1], // Entferne den MIME-Typ-Präfix
-                    },
-                  },
-                ],
-              },
-            ],
-            generation_config: {
-              temperature: 0.2,
-              top_p: 0.8,
-              top_k: 40,
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `
+                Analysiere die hochgeladene Datei und extrahiere daraus Punkte für ein Koordinatensystem.
+                Die X-Achse repräsentiert "${xAxisLabel}" und die Y-Achse repräsentiert "${yAxisLabel}".
+                Gib die Punkte als JSON-Array im folgenden Format zurück:
+                [{"x": Wert, "y": Wert}, {"x": Wert, "y": Wert}, ...]
+                Achte darauf, dass die Werte numerisch sind und keine Strings.
+                Gib NUR das JSON-Array zurück, ohne zusätzlichen Text oder Markdown-Formatierung.
+              `,
             },
-          }),
+            {
+              type: "image",
+              image: new URL(fileBase64), // Assuming fileBase64 is a data URL
+            },
+          ],
         },
-      );
+      ];
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error?.message || "Fehler bei der API-Anfrage",
-        );
-      }
+      // Log the messages array to check its structure, especially the image part
+      console.log("Messages being sent to Groq:", JSON.stringify(messages, null, 2));
 
-      const data = await response.json();
 
-      // Extrahiere die Antwort und parse das JSON
-      const responseText = data.candidates[0]?.content?.parts[0]?.text;
+      const { text } = await generateText({
+        model: groq("llama3-8b-8192"), // Example model, adjust as needed. User mentioned meta-llama/llama-4-scout-17b-16e-instruct
+        messages: messages,
+        temperature: 0.2,
+        maxTokens: 1024, // Corresponds to max_completion_tokens
+        topP: 0.8, // Corresponds to top_p
+        // stream: false, // stream is part of the createChatCompletion call, not generateText
+        // stop: null, // stop is part of the createChatCompletion call, not generateText
+      });
 
-      if (!responseText) {
+      if (!text) {
         throw new Error("Keine Antwort von der API erhalten");
       }
 
       // Versuche, JSON aus der Antwort zu extrahieren
-      const jsonMatch = responseText.match(/\[.*\]/s);
-      if (!jsonMatch) {
-        throw new Error("Konnte kein JSON-Array in der Antwort finden");
+      // Groq might return the JSON directly, or it might be wrapped in markdown
+      let extractedJson = text.trim();
+      if (extractedJson.startsWith("```json")) {
+        extractedJson = extractedJson.substring(7);
+      }
+      if (extractedJson.endsWith("```")) {
+        extractedJson = extractedJson.substring(0, extractedJson.length - 3);
       }
 
-      const extractedJson = jsonMatch[0];
+      // Further attempt to find JSON array if it's embedded
+      const jsonMatch = extractedJson.match(/(\[.*\])/s);
+      if (jsonMatch && jsonMatch[0]) {
+        extractedJson = jsonMatch[0];
+      } else if (!extractedJson.startsWith("[")) {
+         // If no clear JSON array is found and it's not starting with `[`, assume it's an error or unexpected format
+        console.error("Unexpected API response format:", extractedJson);
+        throw new Error("Konnte kein gültiges JSON-Array in der Antwort finden. Antwort: " + extractedJson);
+      }
+
+
       const parsedPoints = JSON.parse(extractedJson);
 
-      // Validiere die Punkte
       if (!Array.isArray(parsedPoints)) {
         throw new Error("Die API hat kein gültiges Array zurückgegeben");
       }
@@ -191,9 +155,7 @@ function App() {
         throw new Error("Keine gültigen Punkte gefunden");
       }
 
-      // Sortiere die Punkte nach X-Wert
       validPoints.sort((a, b) => a.x - b.x);
-
       setPoints(validPoints);
     } catch (error) {
       console.error("Fehler bei der Verarbeitung:", error);
@@ -345,7 +307,7 @@ function App() {
     <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-center">
-          Gemini Koordinaten-Visualisierung
+          Groq Koordinaten-Visualisierung
         </h1>
         <Button
           onClick={() => setTheme(theme === "light" ? "dark" : "light")}
@@ -363,45 +325,6 @@ function App() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Linke Spalte: Einstellungen */}
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>API-Einstellungen</CardTitle>
-              <CardDescription>
-                Geben Sie Ihren Gemini API-Schlüssel ein
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center space-x-2">
-                  <div className="grid w-full items-center gap-1.5">
-                    <Label htmlFor="apiKey">API-Schlüssel</Label>
-                    <div className="relative">
-                      <Input
-                        id="apiKey"
-                        type={showApiKey ? "text" : "password"}
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        placeholder="Gemini API-Schlüssel eingeben"
-                        className="pr-10"
-                        autoComplete="current-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowApiKey(!showApiKey)}
-                        className="absolute inset-y-0 right-0 flex items-center pr-3"
-                      >
-                        {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <Button onClick={saveApiKey} className="w-full">
-                  Speichern
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>Achsenbeschriftung</CardTitle>
@@ -548,16 +471,11 @@ function App() {
                 </div>
                 <Button
                   onClick={processFile}
-                  disabled={!selectedFile || isProcessing || !apiKey}
+                  disabled={!selectedFile || isProcessing}
                   className="w-full"
                 >
-                  {isProcessing ? "Verarbeite..." : "Mit Gemini verarbeiten"}
+                  {isProcessing ? "Verarbeite..." : "Mit Groq verarbeiten"}
                 </Button>
-                {!apiKey && (
-                  <p className="text-sm text-red-500">
-                    Bitte geben Sie zuerst einen API-Schlüssel ein
-                  </p>
-                )}
                 {processingError && (
                   <p className="text-sm text-red-500">
                     Fehler: {processingError}
