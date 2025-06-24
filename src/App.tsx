@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/select";
-import { Download, Save, Eye, EyeOff } from "lucide-react";
+import { Download, Save } from "lucide-react";
 import CoordinateSystem from "./components/CoordinateSystem";
 import Loader from "./components/Loader";
 import "./App.css";
